@@ -20,15 +20,10 @@ public class Leads
 
     [JsonPropertyName("entryDate")]
     public required string EntryDate { get; set; }
-    private List<Leads> sourceLeads;
 
-    public List<Leads> GetSourceLeads()
-    {
-        return sourceLeads;
-    }
+    [JsonPropertyName("sourceLeads")]
+    public List<Leads>? SourceLeads { get; set; }
 
-    public void SetSourceLeads(List<Leads> value)
-    {
-        sourceLeads = value;
-    }
+    public bool IsValid{ get; set; }
+
 }
