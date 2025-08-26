@@ -98,6 +98,44 @@ public class Program
 
                             if (emailLeadIdx != -1 && idLeadIdx != -1 && emailLeadIdx != idLeadIdx)
                             {
+                                var emailBasedLead = outputList[emailLeadIdx];
+                                var idBasedLead = outputList[idLeadIdx];
+
+                                //First we need to reconcile the two entries that we already have 
+                                int comp = DateUtils.CompareDates(emailBasedLead.EntryDate, idBasedLead.EntryDate);
+                                if (comp == -2)
+                                {
+                                    throw new Exception("One of the JSON dates are invalid");
+                                }
+
+                                //The email based lead is greater. 
+                                if (comp == 1)
+                                {
+                                    //The id based lead must also point here
+                                    //Therefore we must first update the id based lead to be invalid
+                                    idBasedLead.IsValid = false;
+                                    //Then we need to merge it's sources with email based lead's sources
+                                    emailBasedLead.SourceLeads.AddRange(idBasedLead.SourceLeads);
+                                    //Then finally the dict is updated
+                                    idLeadDict[idBasedLead.Id] = emailLeadIdx;
+
+                                    //Now since email based lead is the POR
+                                    //We will merge the input lead with that
+                                    MergeLeads(ref outputList, emailLeadIdx, inputLead, ref idLeadDict, ref emailLeadsDict, false, false);
+
+                                }
+                                //The id based lead is greater
+                                else if (comp <= 0)
+                                {
+                                    //Same as above the email based lead must also point here
+                                    //Therefore we must first update the email based lead to be invalid. 
+                                    emailBasedLead.IsValid = false;
+                                    //Then we need to merge it's sources with id based lead's sources
+                                    idBasedLead.SourceLeads.AddRange(emailBasedLead.SourceLeads);
+                                    //Then finally dict is updated
+                                    emailLeadsDict[emailBasedLead.Email] = idLeadIdx;
+                                    MergeLeads(ref outputList, idLeadIdx, inputLead, ref idLeadDict, ref emailLeadsDict, false, false);
+                                }
 
                             }
                             else if (emailLeadIdx == idLeadIdx)
