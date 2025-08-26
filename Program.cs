@@ -55,14 +55,23 @@ public class Program
                 {
                     string fileData = File.ReadAllText(fileName);
 
-                    List<Leads>? inputLeads = JsonSerializer.Deserialize<List<Leads>>(fileData);
-                    if (inputLeads == null)
+                    List<Leads>? inputLeads = null;
+                    
+                    // Try to deserialize as direct array first
+                    // If that fails, try to deserialize as wrapper object
+                    var wrapper = JsonSerializer.Deserialize<JsonElement>(fileData);
+                    if (wrapper.TryGetProperty("leads", out JsonElement leadsElement))
                     {
-                        throw new JsonException("List of leads is null");
+                        inputLeads = JsonSerializer.Deserialize<List<Leads>>(leadsElement.GetRawText());
+                        if (inputLeads == null)
+                        {
+                            throw new JsonException("Could not parse leads from JSON");
+                        }
+                        Console.WriteLine("Number of leads processed from the source file: " + inputLeads.Count);
                     }
                     else
                     {
-                        Console.WriteLine("Number of leads processed from the source file: " + inputLeads.Count);
+                        throw new JsonException("Could not parse leads from JSON - 'leads' property not found");
                     }
 
                     //Step 2: Create the data structures that will handle the JSON
@@ -73,23 +82,23 @@ public class Program
                     Dictionary<string, int> emailLeadsDict = new();
                     List<Leads> outputList = new();
 
-                    //Now start parsing the list of leads from the input
+                    //2b: Now start parsing the list of leads from the input
                     foreach (var inputLead in inputLeads)
                     {
-                        //Check if either of the dictionary has the entry for this id or email
+                        //2c: Check if either of the dictionary has the entry for this id or email
                         if (idLeadDict.ContainsKey(inputLead.Id) || emailLeadsDict.ContainsKey(inputLead.Email))
                         {
                             //We have detected a conflict
                             //We need to resolve it. 
 
-                            //First let's see if the idLeadDict has a conflicting entry
+                            //2d: First let's see if the idLeadDict has a conflicting entry
                             int idLeadIdx = -1;
                             if (idLeadDict.ContainsKey(inputLead.Id))
                             {
                                 idLeadIdx = idLeadDict[inputLead.Id];
                             }
 
-                            //Now let's see if the emailLeadDict has a conflicting entry
+                            //2e: Now let's see if the emailLeadDict has a conflicting entry
                             int emailLeadIdx = -1;
                             if (emailLeadsDict.ContainsKey(inputLead.Email))
                             {
@@ -101,15 +110,38 @@ public class Program
                                 var emailBasedLead = outputList[emailLeadIdx];
                                 var idBasedLead = outputList[idLeadIdx];
 
-                                //First we need to reconcile the two entries that we already have 
+                                //2f: First we need to reconcile the two entries that we already have 
                                 int comp = DateUtils.CompareDates(emailBasedLead.EntryDate, idBasedLead.EntryDate);
                                 if (comp == -2)
                                 {
                                     throw new Exception("One of the JSON dates are invalid");
                                 }
 
-                                //The email based lead is greater. 
+                                bool emailBasedLeadIsWinner = false;
+                                bool idBasedLeadIsWinner = false;
+
                                 if (comp == 1)
+                                {
+                                    emailBasedLeadIsWinner = true;
+                                }
+                                else if (comp == -1)
+                                {
+                                    idBasedLeadIsWinner = true;
+                                }
+                                else if (comp == 0)
+                                {
+                                    if (emailLeadIdx > idLeadIdx)
+                                    {
+                                        emailBasedLeadIsWinner = true;
+                                    }
+                                    else
+                                    {
+                                        idBasedLeadIsWinner = true;
+                                    }
+                                }
+
+                                //2g: The email based lead is greater. 
+                                if (emailBasedLeadIsWinner)
                                 {
                                     //The id based lead must also point here
                                     //Therefore we must first update the id based lead to be invalid
@@ -124,8 +156,8 @@ public class Program
                                     MergeLeads(ref outputList, emailLeadIdx, inputLead, ref idLeadDict, ref emailLeadsDict, false, false);
 
                                 }
-                                //The id based lead is greater
-                                else if (comp <= 0)
+                                //2h: The id based lead is greater
+                                else if (idBasedLeadIsWinner)
                                 {
                                     //Same as above the email based lead must also point here
                                     //Therefore we must first update the email based lead to be invalid. 
@@ -140,7 +172,7 @@ public class Program
                             }
                             else if (emailLeadIdx == idLeadIdx)
                             {
-                                //Both are pointing to the same idx node
+                                //2i: Both are pointing to the same idx node
                                 MergeLeads(ref outputList, emailLeadIdx, inputLead, ref idLeadDict, ref emailLeadsDict, false, false);
                             }
                             else if (emailLeadIdx == -1)
@@ -155,7 +187,7 @@ public class Program
                         }
                         else
                         {
-                            //If not then add the entry to the dictionary and add object to the list
+                            //2j: If not then add the entry to the dictionary and add object to the list
                             outputList.Add(inputLead);
                             int idx = outputList.Count - 1;
                             idLeadDict.Add(inputLead.Id, idx);
@@ -168,6 +200,50 @@ public class Program
                             outputList[idx].IsValid = true;
                         }
                     }
+
+                    //3: Filter valid leads and create output JSON
+                    var validLeads = outputList.Where(lead => lead.IsValid).ToList();
+                    
+                    // Create simplified objects for serialization
+                    var outputData = validLeads.Select(lead => new
+                    {
+                        _id = lead.Id,
+                        email = lead.Email,
+                        firstName = lead.FirstName,
+                        lastName = lead.LastName,
+                        address = lead.Address,
+                        entryDate = lead.EntryDate,
+                        sourceLeads = lead.SourceLeads?.Select(sourceLead => new
+                        {
+                            _id = sourceLead.Id,
+                            email = sourceLead.Email,
+                            firstName = sourceLead.FirstName,
+                            lastName = sourceLead.LastName,
+                            address = sourceLead.Address,
+                            entryDate = sourceLead.EntryDate
+                            // Omit sourceLeads and isValid for nested items
+                        }).ToList()
+                        // Omit isValid for root level items
+                    }).ToList();
+                    
+                    //Step 4: Create JSON options
+                    var options = new JsonSerializerOptions 
+                    { 
+                        WriteIndented = true,
+                        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    };
+                    
+                    var wrappedOutput = new { leads = outputData };
+                    string outputJson = JsonSerializer.Serialize(wrappedOutput, options);
+                    
+                    //Step 5: Write to output file
+                    string outputFileName = Path.GetFileNameWithoutExtension(fileName) + "_deDuplicated.json";
+                    File.WriteAllText(outputFileName, outputJson);
+                    
+                    Console.WriteLine("Deduplicated leads written to: "+outputFileName);
+                    Console.WriteLine("Number of deduplicated leads: "+validLeads.Count);
+
 
 
                 }
